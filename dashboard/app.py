@@ -62,7 +62,7 @@ def page_header(eyebrow, title, subtitle):
 st.sidebar.markdown("# TrayEye")
 st.sidebar.caption("Умный контроль пищевых отходов")
 st.sidebar.markdown("---")
-page = st.sidebar.radio("НАВИГАЦИЯ", ["Обзор", "Камера и распознавание", "Меню", "Проверка событий", "Администратор системы", "Настройки"], label_visibility="visible")
+page = st.sidebar.radio("НАВИГАЦИЯ", ["Обзор", "Камера и распознавание", "Меню", "Проверка событий", "Камеры", "Журнал действий", "Администратор системы", "Настройки"], label_visibility="visible")
 st.sidebar.markdown("---")
 st.sidebar.markdown('<span class="trayeye-pill">ДЕМО-ПЛАТФОРМА</span>', unsafe_allow_html=True)
 st.sidebar.caption("Результаты распознавания требуют проверки человеком.")
@@ -169,10 +169,20 @@ elif page == "Меню":
 
 elif page == "Проверка событий":
     page_header("Контроль качества", "Очередь проверки", "Просматривайте результаты и подтверждайте или исправляйте решения модели.")
-    status_filter = st.selectbox("Статус события", ["Все", "review", "approved", "corrected", "dismissed"])
-    kwargs = {} if status_filter == "Все" else {"params": {"status": status_filter}}
-    events_response = api("GET", "/api/events", **kwargs)
+    filter_a, filter_b, filter_c = st.columns([1, 1.4, 1])
+    with filter_a:
+        status_filter = st.selectbox("Статус", ["Все", "review", "approved", "corrected", "dismissed"])
+    with filter_b:
+        search_query = st.text_input("Поиск по ID, продукту, имени файла или комментарию", placeholder="Например: рыба или 1002")
+    with filter_c:
+        meal_filter = st.selectbox("Приём пищи", ["Все", "Завтрак", "Обед"])
+    params = {"limit": 100}
+    if status_filter != "Все": params["status"] = status_filter
+    if search_query.strip(): params["q"] = search_query.strip()
+    if meal_filter != "Все": params["meal"] = meal_filter
+    events_response = api("GET", "/api/events", params=params)
     events = (events_response or {}).get("items", []) if isinstance(events_response, dict) else (events_response or [])
+    if isinstance(events_response, dict): st.caption("Найдено событий: " + str(events_response.get("total", len(events))))
     if not events:
         st.info("Событий для отображения нет либо API временно недоступен.")
     for event in events:
@@ -207,17 +217,24 @@ elif page == "Администратор системы":
     b.metric("Модель", "НАСТРОЕНА" if model_ready else "НЕ ПОДКЛЮЧЕНА")
     c.metric("События", len(events))
     d.metric("На проверке", sum(1 for e in events if e.get("status") == "review"))
-    st.markdown("### 1. Подключение камеры")
-    st.caption("Адрес хранится в текущей сессии панели. Реальный видеопоток требует отдельного подключения камеры к серверу.")
-    camera_url = st.text_input("IP / URL камеры", value=st.session_state.get("trayeye_camera_url", "http://192.168.1.100"), placeholder="http://192.168.1.100 или rtsp://...")
-    if st.button("Сохранить адрес камеры", use_container_width=True):
-        parsed = urlparse(camera_url.strip())
-        if parsed.scheme not in {"http", "https", "rtsp"} or not parsed.hostname:
-            st.error("Укажи URL с http://, https:// или rtsp://.")
-        else:
-            st.session_state["trayeye_camera_url"] = camera_url.strip()
-            st.success("Адрес сохранён в текущей сессии панели.")
-    st.info("RTSP нельзя проверить обычным HTTP-запросом. Live-view требует сетевого доступа к потоку и настройки API.")
+    st.markdown("### Подключение камеры")
+    st.caption("Камеры можно зарегистрировать заранее. Пока физической камеры нет, оставь её отключённой.")
+    cameras = api("GET", "/api/cameras", show_error=False) or []
+    if cameras: st.dataframe(cameras, use_container_width=True, hide_index=True)
+    with st.form("create_camera_form"):
+        camera_name = st.text_input("Название", value="Камера столовой")
+        camera_location = st.text_input("Расположение", value="Комбинат")
+        camera_kind = st.selectbox("Тип", ["ip", "rtsp", "demo"])
+        camera_address = st.text_input("IP / URL (можно оставить пустым)", placeholder="rtsp://...")
+        camera_enabled = st.checkbox("Включить камеру", value=False)
+        if st.form_submit_button("Добавить камеру"):
+            parsed = urlparse(camera_address.strip()) if camera_address.strip() else None
+            if parsed and (parsed.scheme not in {"http", "https", "rtsp"} or not parsed.hostname):
+                st.error("Проверь URL: допустимы http://, https:// и rtsp://.")
+            else:
+                payload = {"name": camera_name.strip(), "location": camera_location.strip(), "kind": camera_kind, "address": camera_address.strip() or None, "enabled": camera_enabled}
+                if api("POST", "/api/cameras", json=payload): st.success("Камера зарегистрирована."); st.rerun()
+    st.info("Сохранение адреса не подключает реальный поток. RTSP добавим после установки камеры.")
     st.markdown("### 2. Диагностика системы")
     st.write("Адрес API:", API)
     st.write("Статус API:", (health or {}).get("status", "Нет связи"))
@@ -249,6 +266,37 @@ elif page == "Администратор системы":
     st.write("- Не удаляй спорные результаты до проверки сотрудником.")
     st.write("- Не публикуй пароли камеры и файлы весов в Git.")
     st.write("- Сейчас события, меню и расписание хранятся в памяти и сбрасываются после перезапуска.")
+
+elif page == "Камеры":
+    page_header("ИНФРАСТРУКТУРА", "Реестр камер", "Регистрируй будущие IP-камеры и управляй их конфигурацией.")
+    cameras = api("GET", "/api/cameras") or []
+    if cameras:
+        for camera in cameras:
+            label = str(camera["name"]) + " · " + str(camera["location"]) + " · " + ("Включена" if camera["enabled"] else "Отключена")
+            with st.expander(label):
+                st.write("Тип:", camera["kind"])
+                st.write("Адрес:", camera.get("address") or "Не задан")
+                st.write("Последний сигнал:", camera.get("last_seen_at") or "Ещё не подключалась")
+                with st.form("camera_edit_" + str(camera["id"])):
+                    name = st.text_input("Название", value=camera["name"])
+                    location = st.text_input("Расположение", value=camera["location"])
+                    kind = st.selectbox("Тип камеры", ["ip", "rtsp", "demo"], index=["ip", "rtsp", "demo"].index(camera["kind"]))
+                    address = st.text_input("IP / URL", value=camera.get("address") or "")
+                    enabled = st.checkbox("Включена", value=camera["enabled"])
+                    if st.form_submit_button("Сохранить камеру"):
+                        parsed = urlparse(address.strip()) if address.strip() else None
+                        if parsed and (parsed.scheme not in {"http", "https", "rtsp"} or not parsed.hostname): st.error("Некорректный URL.")
+                        else:
+                            payload = {"name": name.strip(), "location": location.strip(), "kind": kind, "address": address.strip() or None, "enabled": enabled}
+                            if api("PATCH", "/api/cameras/" + str(camera["id"]), json=payload): st.success("Настройки камеры сохранены."); st.rerun()
+    else: st.info("Камеры пока не зарегистрированы.")
+    st.caption("Видеопоток появится после установки камеры и настройки сетевого доступа.")
+
+elif page == "Журнал действий":
+    page_header("АУДИТ", "Журнал действий администратора", "История изменений меню, камер, настроек, результатов распознавания и удалений.")
+    logs = api("GET", "/api/audit", params={"limit": 200}) or []
+    if logs: st.dataframe(logs, use_container_width=True, hide_index=True)
+    else: st.info("Журнал пока пуст или API недоступен.")
 
 elif page == "Настройки":
     page_header("Конфигурация", "Настройки системы", "Настройте расписание и проверьте адрес API.")
