@@ -1,5 +1,5 @@
 services:
-  - type: pserv
+  - type: pg
     name: trayeye-db
     plan: basic-256mb
     databaseName: trayeye
