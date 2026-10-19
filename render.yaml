@@ -1,4 +1,9 @@
 services:
+  - type: pserv
+    name: trayeye-db
+    plan: basic-256mb
+    databaseName: trayeye
+    user: trayeye
   - type: web
     name: trayeye-api
     runtime: python
@@ -11,7 +16,12 @@ services:
         value: 3.11.9
       - key: TZ
         value: Europe/Berlin
-
+      - key: DATABASE_URL
+        fromDatabase:
+          name: trayeye-db
+          property: connectionString
+      - key: TRAYEYE_ADMIN_TOKEN
+        sync: false
   - type: web
     name: trayeye-dashboard
     runtime: python
@@ -23,3 +33,5 @@ services:
         value: 3.11.9
       - key: TRAYEYE_API_URL
         value: https://trayeye-api.onrender.com
+      - key: TRAYEYE_ADMIN_TOKEN
+        sync: false
