@@ -6,6 +6,7 @@ import requests
 import streamlit as st
 
 API = os.getenv("TRAYEYE_API_URL", "http://127.0.0.1:8000").rstrip("/")
+ADMIN_TOKEN = os.getenv("TRAYEYE_ADMIN_TOKEN", "").strip()
 st.set_page_config(page_title="TrayEye · Контроль пищевых отходов", page_icon="📷", layout="wide", initial_sidebar_state="expanded")
 
 st.markdown("""
@@ -40,7 +41,10 @@ div[data-baseweb="select"] > div, div[data-baseweb="input"] > div, textarea { ba
 
 def api(method, path, *, show_error=True, **kwargs):
     try:
-        response = requests.request(method, f"{API}{path}", timeout=12, **kwargs)
+        headers = dict(kwargs.pop("headers", {}) or {})
+        if ADMIN_TOKEN:
+            headers["X-Admin-Token"] = ADMIN_TOKEN
+        response = requests.request(method, f"{API}{path}", timeout=12, headers=headers, **kwargs)
         response.raise_for_status()
         return response.json()
     except requests.RequestException as exc:
@@ -62,13 +66,16 @@ page = st.sidebar.radio("НАВИГАЦИЯ", ["Обзор", "Камера и р
 st.sidebar.markdown("---")
 st.sidebar.markdown('<span class="trayeye-pill">ДЕМО-ПЛАТФОРМА</span>', unsafe_allow_html=True)
 st.sidebar.caption("Результаты распознавания требуют проверки человеком.")
+if not ADMIN_TOKEN:
+    st.sidebar.warning("TRAYEYE_ADMIN_TOKEN не задан: включите токен для защищённого доступа.")
 
 if page == "Обзор":
     page_header("Мониторинг столовой", "Обзор", "Сводка по меню, проверкам и состоянию системы.")
     health = api("GET", "/health", show_error=False)
     schedule = api("GET", "/api/schedule", show_error=False)
     menu = api("GET", "/api/menu", show_error=False)
-    events = api("GET", "/api/events", show_error=False)
+    events_response = api("GET", "/api/events", show_error=False)
+    events = (events_response or {}).get("items", []) if isinstance(events_response, dict) else (events_response or [])
     connected = health is not None
     if connected:
         st.success("API доступен")
@@ -164,7 +171,8 @@ elif page == "Проверка событий":
     page_header("Контроль качества", "Очередь проверки", "Просматривайте результаты и подтверждайте или исправляйте решения модели.")
     status_filter = st.selectbox("Статус события", ["Все", "review", "approved", "corrected", "dismissed"])
     kwargs = {} if status_filter == "Все" else {"params": {"status": status_filter}}
-    events = api("GET", "/api/events", **kwargs) or []
+    events_response = api("GET", "/api/events", **kwargs)
+    events = (events_response or {}).get("items", []) if isinstance(events_response, dict) else (events_response or [])
     if not events:
         st.info("Событий для отображения нет либо API временно недоступен.")
     for event in events:
@@ -191,7 +199,8 @@ elif page == "Проверка событий":
 elif page == "Администратор системы":
     page_header("SYSTEM ADMINISTRATION", "Центр управления камерой", "Мониторинг API и модели, настройка IP-камеры, диагностика и обслуживание событий.")
     health = api("GET", "/health", show_error=False)
-    events = api("GET", "/api/events", show_error=False) or []
+    events_response = api("GET", "/api/events", show_error=False)
+    events = (events_response or {}).get("items", []) if isinstance(events_response, dict) else (events_response or [])
     model_ready = bool((health or {}).get("model_weights_configured"))
     a, b, c, d = st.columns(4)
     a.metric("API", "ONLINE" if health else "OFFLINE")
@@ -258,4 +267,5 @@ elif page == "Настройки":
     st.markdown("### Подключение сервера")
     st.code(API, language=None)
     st.caption("Если здесь указан неверный адрес, обновите переменную TRAYEYE_API_URL в настройках сервиса dashboard в Render.")
+    st.caption("Для защищённого доступа установите одинаковый TRAYEYE_ADMIN_TOKEN у API и dashboard.")
     st.caption("Telegram-уведомления ещё не реализованы. Для постоянного хранения данных и реального использования в школе понадобится база данных и настройка доступа.")
