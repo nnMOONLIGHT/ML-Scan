@@ -16,9 +16,14 @@ st.markdown("""
 html, body, [class*="css"], button, input, textarea { font-family: "Inter", sans-serif !important; }
 .stApp, [data-testid="stAppViewContainer"] { background: #FFFFFF; color: #1452C5; }
 [data-testid="stHeader"] { background: #FFFFFF; }
-[data-testid="stSidebar"] { background: #008E03; border-right: 1px solid #21483b; }
+[data-testid="stSidebar"] { background: #008E03 !important; border-right: 1px solid #21483b; min-width: 285px !important; width: 285px !important; transform: translateX(0) !important; visibility: visible !important; }
+[data-testid="stSidebar"] > div { width: 285px !important; }
+[data-testid="stSidebarCollapseButton"], [data-testid="collapsedControl"] { display: none !important; visibility: hidden !important; }
 [data-testid="stSidebar"] * { color: #f4faf6 !important; }
-[data-testid="stSidebar"] [data-testid="stRadio"] label { background: transparent; border-radius: 8px; padding: .35rem .5rem; }
+[data-testid="stSidebar"] [data-testid="stRadio"] label { background: transparent; border-radius: 8px; padding: .55rem .65rem; font-weight: 650; }
+[data-testid="stSidebar"] [data-testid="stRadio"] label:hover { background: rgba(255,255,255,.16); }
+[data-testid="stSidebar"] [data-testid="stRadio"] [aria-checked="true"] { background: rgba(255,255,255,.22); border-radius: 8px; }
+@media (max-width: 700px) { [data-testid="stSidebar"] { min-width: 250px !important; width: 250px !important; } [data-testid="stSidebar"] > div { width: 250px !important; } }
 h1,h2,h3,h4,p,label,span,div { }
 h1 { color: #1452C5 !important; font-weight: 750 !important; letter-spacing: -.035em; }
 h2,h3,h4 { color: #1452C5 !important; font-weight: 700 !important; }
@@ -62,7 +67,9 @@ def page_header(eyebrow, title, subtitle):
 st.sidebar.markdown("# TrayEye")
 st.sidebar.caption("Умный контроль пищевых отходов")
 st.sidebar.markdown("---")
-page = st.sidebar.radio("НАВИГАЦИЯ", ["Обзор", "Камера и распознавание", "Меню", "Проверка событий", "Камеры", "Журнал действий", "Администратор системы", "Настройки"], label_visibility="visible")
+if "trayeye_page" not in st.session_state:
+    st.session_state["trayeye_page"] = "Обзор"
+page = st.sidebar.radio("НАВИГАЦИЯ", ["Обзор", "Камера и распознавание", "Меню", "Проверка событий", "Камеры", "Журнал действий", "Администратор системы", "Настройки"], key="trayeye_page", label_visibility="visible")
 st.sidebar.markdown("---")
 st.sidebar.markdown('<span class="trayeye-pill">ДЕМО-ПЛАТФОРМА</span>', unsafe_allow_html=True)
 st.sidebar.caption("Результаты распознавания требуют проверки человеком.")
@@ -224,15 +231,14 @@ elif page == "Администратор системы":
     with st.form("create_camera_form"):
         camera_name = st.text_input("Название", value="Камера столовой")
         camera_location = st.text_input("Расположение", value="Комбинат")
-        camera_kind = st.selectbox("Тип", ["ip", "rtsp", "demo"])
         camera_address = st.text_input("IP / URL (можно оставить пустым)", placeholder="rtsp://...")
         camera_enabled = st.checkbox("Включить камеру", value=False)
         if st.form_submit_button("Добавить камеру"):
             parsed = urlparse(camera_address.strip()) if camera_address.strip() else None
-            if parsed and (parsed.scheme not in {"http", "https", "rtsp"} or not parsed.hostname):
+            if parsed and (parsed.scheme not in {"http", "https", "rtsp", "rtsps"} or not parsed.hostname):
                 st.error("Проверь URL: допустимы http://, https:// и rtsp://.")
             else:
-                payload = {"name": camera_name.strip(), "location": camera_location.strip(), "kind": camera_kind, "address": camera_address.strip() or None, "enabled": camera_enabled}
+                payload = {"name": camera_name.strip(), "location": camera_location.strip(), "url": camera_address.strip(), "enabled": camera_enabled}
                 if api("POST", "/api/cameras", json=payload): st.success("Камера зарегистрирована."); st.rerun()
     st.info("Сохранение адреса не подключает реальный поток. RTSP добавим после установки камеры.")
     st.markdown("### 2. Диагностика системы")
@@ -265,7 +271,7 @@ elif page == "Администратор системы":
     st.write("- Обучай модель на размеченных кадрах именно вашей камеры.")
     st.write("- Не удаляй спорные результаты до проверки сотрудником.")
     st.write("- Не публикуй пароли камеры и файлы весов в Git.")
-    st.write("- Сейчас события, меню и расписание хранятся в памяти и сбрасываются после перезапуска.")
+    st.write("- События, меню, настройки и реестр камер сохраняются в базе данных API.")
 
 elif page == "Камеры":
     page_header("ИНФРАСТРУКТУРА", "Реестр камер", "Регистрируй будущие IP-камеры и управляй их конфигурацией.")
@@ -274,20 +280,18 @@ elif page == "Камеры":
         for camera in cameras:
             label = str(camera["name"]) + " · " + str(camera["location"]) + " · " + ("Включена" if camera["enabled"] else "Отключена")
             with st.expander(label):
-                st.write("Тип:", camera["kind"])
-                st.write("Адрес:", camera.get("address") or "Не задан")
-                st.write("Последний сигнал:", camera.get("last_seen_at") or "Ещё не подключалась")
+                st.write("Адрес:", camera.get("url") or "Не задан")
+                st.write("Дата регистрации:", camera.get("created_at") or "—")
                 with st.form("camera_edit_" + str(camera["id"])):
                     name = st.text_input("Название", value=camera["name"])
                     location = st.text_input("Расположение", value=camera["location"])
-                    kind = st.selectbox("Тип камеры", ["ip", "rtsp", "demo"], index=["ip", "rtsp", "demo"].index(camera["kind"]))
-                    address = st.text_input("IP / URL", value=camera.get("address") or "")
+                    address = st.text_input("IP / URL", value=camera.get("url") or "")
                     enabled = st.checkbox("Включена", value=camera["enabled"])
                     if st.form_submit_button("Сохранить камеру"):
                         parsed = urlparse(address.strip()) if address.strip() else None
-                        if parsed and (parsed.scheme not in {"http", "https", "rtsp"} or not parsed.hostname): st.error("Некорректный URL.")
+                        if parsed and (parsed.scheme not in {"http", "https", "rtsp", "rtsps"} or not parsed.hostname): st.error("Некорректный URL.")
                         else:
-                            payload = {"name": name.strip(), "location": location.strip(), "kind": kind, "address": address.strip() or None, "enabled": enabled}
+                            payload = {"name": name.strip(), "location": location.strip(), "url": address.strip(), "enabled": enabled}
                             if api("PATCH", "/api/cameras/" + str(camera["id"]), json=payload): st.success("Настройки камеры сохранены."); st.rerun()
     else: st.info("Камеры пока не зарегистрированы.")
     st.caption("Видеопоток появится после установки камеры и настройки сетевого доступа.")
