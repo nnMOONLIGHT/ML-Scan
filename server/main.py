@@ -90,6 +90,14 @@ def delete_menu_item(item_id: int):
 def list_events(status: Optional[str] = None):
     return [e for e in reversed(events) if status is None or e["status"] == status]
 
+@app.delete("/api/events/{event_id}")
+def delete_event(event_id: int):
+    """Delete one event when an administrator confirms cleanup."""
+    for index, event in enumerate(events):
+        if event["id"] == event_id:
+            return {"deleted": events.pop(index), "success": True}
+    raise HTTPException(status_code=404, detail="Event not found")
+
 @app.patch("/api/events/{event_id}")
 def review_event(event_id: int, payload: ReviewUpdate):
     for event in events:
