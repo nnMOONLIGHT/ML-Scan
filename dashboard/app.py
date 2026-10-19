@@ -1,28 +1,31 @@
 import os
 from datetime import time
+from urllib.parse import urlparse
 
 import requests
 import streamlit as st
 
 API = os.getenv("TRAYEYE_API_URL", "http://127.0.0.1:8000").rstrip("/")
-st.set_page_config(page_title="TrayEye · Контроль пищевых отходов", page_icon="", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="TrayEye · Контроль пищевых отходов", page_icon="📷", layout="wide", initial_sidebar_state="expanded")
 
 st.markdown("""
 <style>
 :root { color-scheme: light; }
-.stApp, [data-testid="stAppViewContainer"] { background: #f4f7f5; color: #172b25; }
-[data-testid="stHeader"] { background: rgba(244,247,245,.96); }
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap");
+html, body, [class*="css"], button, input, textarea { font-family: "Inter", sans-serif !important; }
+.stApp, [data-testid="stAppViewContainer"] { background: #FFFFFF; color: #1452C5; }
+[data-testid="stHeader"] { background: #FFFFFF; }
 [data-testid="stSidebar"] { background: #008E03; border-right: 1px solid #21483b; }
 [data-testid="stSidebar"] * { color: #f4faf6 !important; }
 [data-testid="stSidebar"] [data-testid="stRadio"] label { background: transparent; border-radius: 8px; padding: .35rem .5rem; }
 h1,h2,h3,h4,p,label,span,div { }
 h1 { color: #1452C5 !important; font-weight: 750 !important; letter-spacing: -.035em; }
-h2,h3,h4 { color: #008E03 !important; font-weight: 700 !important; }
-p, label, .stMarkdown, [data-testid="stCaptionContainer"] { color: #354b42; }
+h2,h3,h4 { color: #1452C5 !important; font-weight: 700 !important; }
+p, label, .stMarkdown, [data-testid="stCaptionContainer"] { color: #1452C5; }
 [data-testid="stMetric"] { background: #fff; border: 1px solid #dce7e0; border-radius: 14px; padding: 18px 20px; box-shadow: 0 2px 8px rgba(20,47,39,.035); }
-[data-testid="stMetricLabel"] { color: #52675d !important; }
-[data-testid="stMetricValue"] { color: #173c2e !important; }
-div.stButton > button, div.stFormSubmitButton > button { background: #008E03; color: #FFFFFF; border: 1px solid #17734e; border-radius: 9px; font-weight: 650; min-height: 2.6rem; }
+[data-testid="stMetricLabel"] { color: #1452C5 !important; }
+[data-testid="stMetricValue"] { color: #1452C5 !important; }
+div.stButton > button, div.stFormSubmitButton > button { background: #FFFFFF; color: #1452C5; border: 1px solid #008E03; border-radius: 9px; font-weight: 650; min-height: 2.6rem; }
 div.stButton > button:hover, div.stFormSubmitButton > button:hover { background: #008E03; color: #FFFFFF; border-color: #10583b; }
 div[data-baseweb="select"] > div, div[data-baseweb="input"] > div, textarea { background: #fff !important; border-color: #cbd9d1 !important; }
 [data-testid="stDataFrame"], [data-testid="stExpander"] { background: #fff; border: 1px solid #dce7e0; border-radius: 12px; }
@@ -55,7 +58,7 @@ def page_header(eyebrow, title, subtitle):
 st.sidebar.markdown("# TrayEye")
 st.sidebar.caption("Умный контроль пищевых отходов")
 st.sidebar.markdown("---")
-page = st.sidebar.radio("НАВИГАЦИЯ", ["Обзор", "Камера и распознавание", "Меню", "Проверка событий", "Настройки"], label_visibility="visible")
+page = st.sidebar.radio("НАВИГАЦИЯ", ["Обзор", "Камера и распознавание", "Меню", "Проверка событий", "Администратор системы", "Настройки"], label_visibility="visible")
 st.sidebar.markdown("---")
 st.sidebar.markdown('<span class="trayeye-pill">ДЕМО-ПЛАТФОРМА</span>', unsafe_allow_html=True)
 st.sidebar.caption("Результаты распознавания требуют проверки человеком.")
@@ -183,6 +186,60 @@ elif page == "Проверка событий":
                     if api("PATCH", f'/api/events/{event["id"]}', json=payload):
                         st.success("Изменения сохранены.")
                         st.rerun()
+
+
+elif page == "Администратор системы":
+    page_header("SYSTEM ADMINISTRATION", "Центр управления камерой", "Мониторинг API и модели, настройка IP-камеры, диагностика и обслуживание событий.")
+    health = api("GET", "/health", show_error=False)
+    events = api("GET", "/api/events", show_error=False) or []
+    model_ready = bool((health or {}).get("model_weights_configured"))
+    a, b, c, d = st.columns(4)
+    a.metric("API", "ONLINE" if health else "OFFLINE")
+    b.metric("Модель", "НАСТРОЕНА" if model_ready else "НЕ ПОДКЛЮЧЕНА")
+    c.metric("События", len(events))
+    d.metric("На проверке", sum(1 for e in events if e.get("status") == "review"))
+    st.markdown("### 1. Подключение камеры")
+    st.caption("Адрес хранится в текущей сессии панели. Реальный видеопоток требует отдельного подключения камеры к серверу.")
+    camera_url = st.text_input("IP / URL камеры", value=st.session_state.get("trayeye_camera_url", "http://192.168.1.100"), placeholder="http://192.168.1.100 или rtsp://...")
+    if st.button("Сохранить адрес камеры", use_container_width=True):
+        parsed = urlparse(camera_url.strip())
+        if parsed.scheme not in {"http", "https", "rtsp"} or not parsed.hostname:
+            st.error("Укажи URL с http://, https:// или rtsp://.")
+        else:
+            st.session_state["trayeye_camera_url"] = camera_url.strip()
+            st.success("Адрес сохранён в текущей сессии панели.")
+    st.info("RTSP нельзя проверить обычным HTTP-запросом. Live-view требует сетевого доступа к потоку и настройки API.")
+    st.markdown("### 2. Диагностика системы")
+    st.write("Адрес API:", API)
+    st.write("Статус API:", (health or {}).get("status", "Нет связи"))
+    st.write("Веса модели заданы:", "Да" if model_ready else "Нет — распознавание не подтверждено")
+    st.write("Порог уверенности:", os.getenv("TRAYEYE_CONFIDENCE", "0.25"))
+    if st.button("Повторить проверку API", use_container_width=True):
+        st.rerun()
+    st.markdown("### 3. Демонстрация сканирования еды")
+    st.caption("Это условный пример интерфейса, не реальный ответ нейросети.")
+    if st.button("Показать пример сканирования", use_container_width=True):
+        st.session_state["trayeye_demo_scan"] = True
+    if st.session_state.get("trayeye_demo_scan"):
+        st.markdown('<div class="trayeye-panel"><h4>Результат · ДЕМО</h4><p>Рыба — 96%</p><p>Овощи — 91%</p><p>Картофель — 88%</p><p>Статус: ожидает проверки сотрудника.</p></div>', unsafe_allow_html=True)
+        st.warning("Проценты условные и не получены моделью.")
+    st.markdown("### 4. Удаление ошибочного события")
+    st.caption("Удаление необратимо для текущего хранилища. Подтверди действие перед удалением.")
+    if events:
+        chosen_event = st.selectbox("Событие", events, format_func=lambda e: f'#{e["id"]} · {e.get("status", "—")} · {e.get("created_at", "—")}')
+        confirmed = st.checkbox(f'Подтверждаю удаление события #{chosen_event["id"]}')
+        if st.button("Удалить событие", disabled=not confirmed, use_container_width=True):
+            result = api("DELETE", f'/api/events/{chosen_event["id"]}')
+            if result is not None:
+                st.success("Событие удалено.")
+                st.rerun()
+    else:
+        st.info("Журнал событий пуст.")
+    st.markdown("### 5. Памятка администратора")
+    st.write("- Обучай модель на размеченных кадрах именно вашей камеры.")
+    st.write("- Не удаляй спорные результаты до проверки сотрудником.")
+    st.write("- Не публикуй пароли камеры и файлы весов в Git.")
+    st.write("- Сейчас события, меню и расписание хранятся в памяти и сбрасываются после перезапуска.")
 
 elif page == "Настройки":
     page_header("Конфигурация", "Настройки системы", "Настройте расписание и проверьте адрес API.")
